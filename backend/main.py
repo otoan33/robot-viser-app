@@ -1,14 +1,18 @@
+import io
 import os
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import viser
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, Response, UploadFile
+from PIL import Image
 from pydantic import BaseModel, Field
 
-from backend.robot import Robot, TrajectoryPlayer, load_trajectory
+from backend.robot import Robot, TrajectoryPlayer, load_trajectory, record_trajectory
 
-# 3D ビューア（viser）を起動する。frontend（NiceGUI :8080）と衝突しないよう既定は 8081
-server = viser.ViserServer(port=int(os.environ.get("VISER_PORT", 8081)))
+# 3D ビューア（viser）を起動する。frontend（NiceGUI :8080）と衝突しないよう既定は 8081。exe では待ち受けアドレスも起動オプションで変える
+server = viser.ViserServer(host=os.environ.get("VISER_HOST", "0.0.0.0"), port=int(os.environ.get("VISER_PORT", 8081)))
 server.scene.add_grid("/grid", width=2.0, height=2.0)
 
 # 起動時はフォルダ名順で先頭のアームとハンドを表示する
@@ -37,6 +41,20 @@ def _(event: viser.GuiEvent):
     if event.client is None: return
     player.stop()
     robot.set_angles(player.angles_list[int(slider.value)])
+
+
+# 画像を PNG のバイト列にする
+def to_png(image) -> bytes:
+    buf = io.BytesIO()
+    Image.fromarray(image).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# 押したブラウザのカメラ視点で描画し、そのブラウザに PNG を保存させる
+screenshot_button = server.gui.add_button("Screenshot")
+@screenshot_button.on_click
+def _(event: viser.GuiEvent):
+    event.client.send_file_download(f"screenshot_{datetime.now():%Y%m%d_%H%M%S}.png", to_png(robot.render(event.client)), save_immediately=True)
 
 
 app = FastAPI(title="robot-viser API")
@@ -97,3 +115,20 @@ def post_trajectory(req: TrajectoryRequest):
 @app.post("/trajectory/upload")
 def post_trajectory_upload(file: UploadFile):
     return play_trajectory(file.file.read().decode("utf-8-sig"))
+
+
+# 送られてきた軌道 CSV をコマ送りで録画して動画（mp4 / gif）を返し、その後は通常どおり再生する
+# （描画に viser 画面を開いているブラウザが必要。録画中はそのブラウザの表示がコマ送りになる）
+@app.post("/trajectory/record")
+def post_trajectory_record(file: UploadFile, format: Literal["mp4", "gif"] = "mp4"):
+    times, angles_list = load_trajectory(file.file.read().decode("utf-8-sig"))
+    player.stop()
+    video = record_trajectory(robot, times, angles_list, format)
+    player.play(times, angles_list)
+    return Response(video, media_type="video/mp4" if format == "mp4" else "image/gif")
+
+
+# 今の 3D 表示を PNG で返す（viser 画面を開いているブラウザが必要）
+@app.get("/screenshot")
+def get_screenshot():
+    return Response(to_png(robot.render()), media_type="image/png")

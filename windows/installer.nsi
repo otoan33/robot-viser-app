@@ -1,10 +1,10 @@
-; docker-test App インストーラ（makensis -DSRC_DIR=... -DOUT_FILE=... で呼び出す）
+; robot-viser インストーラ（makensis -DSRC_DIR=... -DOUT_FILE=... で呼び出す）
 Unicode true
 !include "MUI2.nsh"
 
-!define APP_NAME "docker-test App"
-!define APP_ID "DockerTestApp"
-!define APP_EXE "docker-test-app.exe"
+!define APP_NAME "robot-viser"
+!define APP_ID "RobotViser"
+!define APP_EXE "robot-viser.exe"
 !define APP_VERSION "0.1.0"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# アプリ（NiceGUI + FastAPI）の Windows 版をビルドする
-#   ./windows/build.sh exe        -> dist/docker-test-app.exe（単体 exe）
-#   ./windows/build.sh installer  -> dist/docker-test-app-setup.exe（インストーラ）
+# アプリ（NiceGUI + FastAPI + viser）の Windows 版をビルドする
+#   ./windows/build.sh exe        -> dist/robot-viser.exe（backend + frontend）と dist/robot-viser-backend.exe（backend のみ）の単体 exe
+#   ./windows/build.sh installer  -> dist/robot-viser-setup.exe（backend + frontend のインストーラ）
 set -euo pipefail
 
 MODE="${1:-}"
@@ -11,7 +11,7 @@ if [[ "$MODE" != "exe" && "$MODE" != "installer" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE=docker-test-win-builder
+IMAGE=robot-viser-win-builder
 
 docker build -t "$IMAGE" -f "$ROOT/windows/Dockerfile" "$ROOT"
 

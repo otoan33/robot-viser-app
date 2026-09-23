@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import httpx
 from fastapi import Request
@@ -35,10 +36,23 @@ async def index(request: Request):
             # 軌道 CSV を backend へ転送して再生させる（シーク・停止は viser 画面の Time スライダーと Play/Stop で行う）
             with ui.card().classes("w-full"):
                 ui.label("軌道").classes("text-lg font-bold")
+                # 録画する場合は、読み込み時にコマ送りで動画を作ってダウンロードさせる（その後は通常どおり再生される）
+                with ui.row().classes("items-center"):
+                    record = ui.checkbox("録画する")
+                    fmt = ui.select(["mp4", "gif"], value="mp4").bind_visibility_from(record, "value")
                 async def upload_trajectory(e):
-                    res = await client.post("/trajectory/upload", files={"file": (e.file.name, await e.file.read())})
-                    res.raise_for_status()
-                    ui.notify(f"{e.file.name}: {res.json()['num_points']}点 / {res.json()['duration_sec']:.2f}秒を再生")
+                    files = {"file": (e.file.name, await e.file.read())}
+                    if record.value:
+                        ui.notify(f"{e.file.name}: 録画中…")
+                        # 録画は軌道の長さに応じて時間がかかるため、タイムアウトなしで待つ
+                        res = await client.post("/trajectory/record", params={"format": fmt.value}, files=files, timeout=None)
+                        res.raise_for_status()
+                        ui.download.content(res.content, f"{Path(e.file.name).stem}.{fmt.value}")
+                        ui.notify(f"{e.file.name}: 録画を保存しました")
+                    else:
+                        res = await client.post("/trajectory/upload", files=files)
+                        res.raise_for_status()
+                        ui.notify(f"{e.file.name}: {res.json()['num_points']}点 / {res.json()['duration_sec']:.2f}秒を再生")
                     # 同じファイルを続けてアップロードできるよう、一覧を空に戻す
                     upload.reset()
                 # アップロード部品は枠が大きいので隠し、ボタンからファイル選択ダイアログだけを開く
@@ -46,7 +60,7 @@ async def index(request: Request):
                 ui.button("CSV を選択", on_click=lambda: upload.run_method("pickFiles"))
 
         # 右: viser の 3D ビューア。ブラウザが直接 viser に接続するので、このページと同じホスト名を使う
-        viser_url = os.environ.get("VISER_URL", f"http://{request.url.hostname}:8081")
+        viser_url = os.environ.get("VISER_URL", f"http://{request.url.hostname}:{os.environ.get('VISER_PORT', 8081)}")
         ui.element("iframe").props(f'src="{viser_url}"').classes("grow h-[calc(100vh-2rem)] border-0")
 
 

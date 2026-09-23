@@ -5,3 +5,6 @@ viser==1.1.0
 yourdfpy
 numpy
 python-multipart
+pillow
+imageio
+imageio-ffmpeg

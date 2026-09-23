@@ -1,10 +1,12 @@
 import csv
 import json
+import tempfile
 import threading
 import time
 from functools import partial
 from pathlib import Path
 
+import imageio
 import numpy as np
 import viser
 import viser.transforms as vtf
@@ -62,6 +64,12 @@ class Robot:
             # 全関節0の姿勢で表示する
             self.arm.update_cfg(np.zeros(len(self.arm.get_actuated_joint_names())))
 
+    # 今の 3D 表示を画像 (H, W, 3) で取得する。描画はブラウザ側で行うため、指定のブラウザ（省略時は先頭の1つ）のカメラ視点・画面サイズを使う
+    # （scale で解像度だけを縮められる。視野は変わらない）
+    def render(self, client: viser.ClientHandle | None = None, scale: float = 1.0) -> np.ndarray:
+        camera = (client or next(iter(self.server.get_clients().values()))).camera
+        return camera.get_render(int(camera.image_height * scale), int(camera.image_width * scale))
+
     # 関節角度[deg]（アーム URDF の可動関節の定義順）を表示姿勢に反映する
     def set_angles(self, angles) -> None:
         with self._lock:
@@ -80,6 +88,24 @@ def load_trajectory(text: str) -> tuple[list[float], list[list[float]]]:
     t_col, j_cols = header.index("ElapsedTime[msec]"), [header.index(f"Joint(J{i})[deg]") for i in range(1, 7)]
     data = [r for r in rows[3:] if len(r) == len(header)]
     return [float(r[t_col]) / 1000 for r in data], [[float(r[c]) for c in j_cols] for r in data]
+
+
+# 軌道を一定 fps のコマ送りで描画し、動画（mp4 / gif）のバイト列にする
+# （1コマの描画に時間がかかっても、動画の再生速度は軌道の時刻どおりになる）
+def record_trajectory(robot: Robot, times: list[float], angles_list: list[list[float]], fmt: str, fps: int = 20) -> bytes:
+    # 各コマの時刻に対応する（直前の）軌道フレームを選ぶ
+    indices = np.searchsorted(times, np.arange(times[0], times[-1] + 1e-9, 1 / fps), side="right") - 1
+    frames = []
+    for i in indices:
+        robot.set_angles(angles_list[i])
+        # gif は書き出しが遅くファイルも大きくなるため、半分の解像度で描画する
+        frames.append(robot.render(scale=1.0 if fmt == "mp4" else 0.5))
+    # 書き出しはファイル経由（mp4 は ffmpeg がファイルに書くため）
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / f"record.{fmt}"
+        if fmt == "mp4": imageio.mimwrite(path, frames, fps=fps)
+        else: imageio.mimwrite(path, frames, duration=1000 / fps, loop=0)
+        return path.read_bytes()
 
 
 class TrajectoryPlayer:
