@@ -3,6 +3,7 @@ services:
     build: ./backend
     ports:
       - "8000:8000"
+      - "8081:8081"
     restart: unless-stopped
 
   frontend:

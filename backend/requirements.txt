@@ -1,2 +1,6 @@
 fastapi==0.141.*
 uvicorn[standard]>=0.32
+# viser 0.2.x と 1.x では ViserUrdf のシーンノード命名規則が異なるため固定する
+viser==1.1.0
+yourdfpy
+numpy

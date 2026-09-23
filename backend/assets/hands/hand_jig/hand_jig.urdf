@@ -1,0 +1,16 @@
+<robot name="jig">
+
+  <material name="gray">
+    <color rgba="0.6 0.6 0.6 1.0"/>
+  </material>
+
+  <link name="jig_link">
+    <visual>
+      <geometry>
+        <mesh filename="hand_jig.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+  </link>
+
+</robot>
