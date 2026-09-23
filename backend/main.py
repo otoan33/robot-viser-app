@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import viser
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.robot import Robot, TrajectoryPlayer, load_trajectory
@@ -79,9 +79,21 @@ class TrajectoryRequest(BaseModel):
     csv_path: str
 
 
-# 軌道 CSV を読み込み、バックグラウンドで再生する
-@app.post("/trajectory")
-def post_trajectory(req: TrajectoryRequest):
-    times, angles_list = load_trajectory(Path(req.csv_path))
+# 軌道を読み込み、バックグラウンドで再生する
+def play_trajectory(text: str) -> dict:
+    times, angles_list = load_trajectory(text)
     player.play(times, angles_list)
     return {"ok": True, "num_points": len(times), "duration_sec": times[-1] - times[0]}
+
+
+# backend から見えるパスの軌道 CSV を再生する
+@app.post("/trajectory")
+def post_trajectory(req: TrajectoryRequest):
+    return play_trajectory(Path(req.csv_path).read_text(encoding="utf-8-sig"))
+
+
+# 送られてきた軌道 CSV ファイルを再生する（frontend のアップロードなど、backend と別環境にあるファイル用）
+# （player.stop() の待ちでイベントループを止めないよう、同期関数にしてスレッドプールで動かす）
+@app.post("/trajectory/upload")
+def post_trajectory_upload(file: UploadFile):
+    return play_trajectory(file.file.read().decode("utf-8-sig"))

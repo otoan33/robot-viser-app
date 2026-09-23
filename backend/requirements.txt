@@ -4,3 +4,4 @@ uvicorn[standard]>=0.32
 viser==1.1.0
 yourdfpy
 numpy
+python-multipart

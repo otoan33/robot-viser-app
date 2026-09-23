@@ -1,6 +1,6 @@
 # robot-viser-app
 
-6軸ロボットアームとハンドを [viser](https://viser.studio/) でブラウザに 3D 表示し、FastAPI 経由で表示構成・関節角度・軌道を操作するアプリ。フロントエンドは NiceGUI、バックエンドは FastAPI で、Docker での実行と Windows 用 exe / インストーラのビルドができる。
+6軸ロボットアームとハンドを [viser](https://viser.studio/) でブラウザに 3D 表示し、表示構成・関節角度・軌道を操作するアプリ。NiceGUI の画面から操作できるほか、FastAPI の API を直接呼んでも操作できる。Docker での実行と、Windows 用 exe / インストーラのビルドができる。
 
 ## 構成
 
@@ -16,7 +16,7 @@ robot-viser-app/
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                 # NiceGUI（画面）。backend を HTTP で呼び出す
-│   ├── main.py
+│   ├── main.py               # 操作パネル（構成・関節角度・軌道）と viser の埋め込み表示
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── desktop/
@@ -30,12 +30,25 @@ robot-viser-app/
 
 ```
 ブラウザ ──> frontend (NiceGUI :8080) ──HTTP──> backend (FastAPI :8000)
-ブラウザ ──> backend の viser (3D ビューア :8081)
+   └─ iframe ──> backend の viser (3D ビューア :8081)
 ```
 
 - frontend から backend への接続先は、環境変数 `BACKEND_URL` で指定する（既定は `http://127.0.0.1:8000`）。
 - viser のポートは、環境変数 `VISER_PORT` で変更できる（既定は 8081）。viser 自体の既定は 8080 だが、NiceGUI と衝突するため 8081 にしている。
 - viser は `backend.main` を import した時点で起動する。uvicorn の単体起動、`--reload`、`desktop/launcher.py` のどれでも、追加の設定なしに立ち上がる。
+- frontend の画面は viser を iframe で埋め込んでおり、ブラウザが viser に直接接続する。iframe の URL は、環境変数 `VISER_URL` があればそれを使う。なければ、画面を開いたときのホスト名にポート 8081 を付けたもの（例: `http://localhost:8081`）になる。
+
+## 画面（frontend）
+
+http://localhost:8080 を開くと、左に操作パネル、右に viser の 3D ビューアが表示される。
+
+| パネル | 内容 |
+|---|---|
+| 構成 | アームとハンドをプルダウンで選ぶ。選ぶとすぐ `POST /robot` で表示を切り替える。ハンドは「なし」も選べる |
+| 関節角度 [deg] | J1〜J6 の角度を入力し、「送信」で `POST /joints` を送る |
+| 軌道 | 軌道 CSV を選ぶと、すぐ `POST /trajectory/upload` へ送って再生する。点数と再生時間を通知で表示する |
+
+再生中のシークや停止は、右側の viser 画面にある Time スライダーと Play / Stop ボタンで行う（下記「軌道の再生」）。
 
 ## backend API
 
@@ -47,8 +60,10 @@ API ドキュメントは http://localhost:8000/docs で確認できる。ここ
 | POST | `/robot` | `{"arm": "robotA", "hand": "hand_jig"}` | 表示する構成を切り替える。`hand` を省略するか `null` にすると、アームのみを表示する |
 | POST | `/joints` | `{"angles": [30, -20, 0, 0, 0, 0]}` | 6軸の関節角度 [deg] を反映する。順序はアーム URDF の可動関節の定義順 |
 | POST | `/trajectory` | `{"csv_path": "/app/backend/assets/trajectories/test.csv"}` | 軌道 CSV を読み込んで再生する。パスは backend から見えるパスを指定する |
+| POST | `/trajectory/upload` | multipart の `file`（CSV ファイル） | 送られてきた軌道 CSV を再生する。backend とは別の環境にあるファイルを送るときに使う |
 
-起動時は、アームとハンドそれぞれについて、フォルダ名順で先頭のものを表示する。
+- 起動時は、アームとハンドそれぞれについて、フォルダ名順で先頭のものを表示する。
+- `POST /robot` はアームの STL を読み直すため、数秒かかる。読み込み中に届いた構成の切り替えや角度の反映は、読み込みが終わるのを待ってから実行する。
 
 ### 送信例
 
@@ -64,9 +79,15 @@ Windows のコマンドプロンプトではシングルクォートが使えな
 curl -X POST localhost:8000/joints -H "Content-Type: application/json" -d "{\"angles\":[30,-20,0,0,0,0]}"
 ```
 
+軌道ファイルを送る場合は、次のようにする（bash・コマンドプロンプト共通）。
+
+```
+curl -F file=@backend/assets/trajectories/test.csv localhost:8000/trajectory/upload
+```
+
 ### 軌道の再生
 
-`POST /trajectory` を送ると、軌道の時刻どおりにバックグラウンドで再生する。再生中に新しい軌道を送ると、前の軌道は打ち切って新しい軌道に切り替わる。`POST /robot` で構成を切り替えた場合は、再生を止めてから切り替える。
+`POST /trajectory` または `POST /trajectory/upload` を送ると、軌道の時刻どおりにバックグラウンドで再生する。再生中に新しい軌道を送ると、前の軌道は打ち切って新しい軌道に切り替わる。`POST /robot` で構成を切り替えた場合は、再生を止めてから切り替える。
 
 viser 画面の右側のパネルでも再生を操作できる。
 
@@ -133,6 +154,7 @@ VSCode のコマンドパレットで「Dev Containers: Reopen in Container」�
   - ログは `/tmp/backend.log` と `/tmp/frontend.log` に出る。
 - compose のサービスがポート 8000 / 8080 / 8081 を使っている場合、VSCode は空いている別のポートに転送する（「ポート」タブで確認できる）。
 - `forwardPorts` に入っているのは 8000 / 8080 だけ。viser の 8081 が転送されていない場合は、「ポート」タブから追加する。
+- 8081 が別のポートに転送された場合、frontend の iframe は viser に接続できない。その場合は、frontend の環境変数 `VISER_URL` に転送先の URL を指定する。
 
 ## Windows 版をビルドする
 
@@ -179,6 +201,5 @@ docker-test-app.exe --frontend-port 9080 --backend-port 9000   # ポートを変
 
 ## 未対応・既知の問題
 
-- frontend は初期サンプルのままで、ロボット操作の画面はまだない。「GET /」「POST /items」のボタンは、対応する API を削除したためエラーになる。
-- Windows 版には、backend（viser・assets）を移植した後の変更がまだ反映されていない。viser クライアントの静的ファイルと `backend/assets` の同梱が必要になる見込み。
+- Windows 版には、viser・assets・新しい frontend を追加した後の変更がまだ反映されていない。viser クライアントの静的ファイルと `backend/assets` の同梱が必要になる見込み。
 - `trajectories/trajectory.csv` は値が 0〜0.6 程度と小さく、deg として扱うとほとんど動かない。値がラジアンで書かれている可能性がある。

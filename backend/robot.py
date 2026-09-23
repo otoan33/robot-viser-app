@@ -31,6 +31,8 @@ class Robot:
         self.hand: ViserUrdf | None = None
         self.arm_name: str | None = None
         self.hand_name: str | None = None
+        # API は別スレッドで同時に呼ばれるため、差し替え途中のノードに姿勢を書き込まないよう排他する
+        self._lock = threading.Lock()
 
     # 選択可能な構成の一覧（フォルダ名）
     @staticmethod
@@ -40,34 +42,36 @@ class Robot:
 
     # 表示中の構成を消して、指定のアーム（とハンド）で表示し直す
     def load(self, arm_name: str, hand_name: str | None = None) -> None:
-        # アームの visual ルート配下にハンドもぶら下がっているので、まとめて消える
-        self.server.scene.remove_by_name("/visual")
-        arm_model = load_urdf(ASSETS_DIR / "arms" / arm_name)
-        self.arm, self.hand = ViserUrdf(self.server, urdf_or_path=arm_model), None
-        self.arm_name, self.hand_name = arm_name, hand_name
+        with self._lock:
+            # アームの visual ルート配下にハンドもぶら下がっているので、まとめて消える
+            self.server.scene.remove_by_name("/visual")
+            arm_model = load_urdf(ASSETS_DIR / "arms" / arm_name)
+            self.arm, self.hand = ViserUrdf(self.server, urdf_or_path=arm_model), None
+            self.arm_name, self.hand_name = arm_name, hand_name
 
-        # ハンドはアームの取り付けリンクのフレームを親にし、mount.json の位置・姿勢でオフセットする
-        if hand_name:
-            hand_dir = ASSETS_DIR / "hands" / hand_name
-            mount = json.loads((hand_dir / "mount.json").read_text())
-            parent = _viser_name_from_frame(arm_model.scene, mount["link"], "/visual")
-            self.hand = ViserUrdf(self.server, urdf_or_path=load_urdf(hand_dir), root_node_name=parent)
-            self.hand._visual_root_frame.position = mount["position"]
-            self.hand._visual_root_frame.wxyz = vtf.SO3.from_rpy_radians(*mount["rpy"]).wxyz
-            self.hand.update_cfg(np.zeros(len(self.hand.get_actuated_joint_names())))
+            # ハンドはアームの取り付けリンクのフレームを親にし、mount.json の位置・姿勢でオフセットする
+            if hand_name:
+                hand_dir = ASSETS_DIR / "hands" / hand_name
+                mount = json.loads((hand_dir / "mount.json").read_text())
+                parent = _viser_name_from_frame(arm_model.scene, mount["link"], "/visual")
+                self.hand = ViserUrdf(self.server, urdf_or_path=load_urdf(hand_dir), root_node_name=parent)
+                self.hand._visual_root_frame.position = mount["position"]
+                self.hand._visual_root_frame.wxyz = vtf.SO3.from_rpy_radians(*mount["rpy"]).wxyz
+                self.hand.update_cfg(np.zeros(len(self.hand.get_actuated_joint_names())))
 
-        # 全関節0の姿勢で表示する
-        self.arm.update_cfg(np.zeros(len(self.arm.get_actuated_joint_names())))
+            # 全関節0の姿勢で表示する
+            self.arm.update_cfg(np.zeros(len(self.arm.get_actuated_joint_names())))
 
     # 関節角度[deg]（アーム URDF の可動関節の定義順）を表示姿勢に反映する
     def set_angles(self, angles) -> None:
-        self.arm.update_cfg(np.deg2rad(np.array(angles, dtype=float)))
+        with self._lock:
+            self.arm.update_cfg(np.deg2rad(np.array(angles, dtype=float)))
 
 
 # 軌道 CSV を (時刻[sec] のリスト, 6関節角度[deg] のリスト) として読み込む
-def load_trajectory(csv_path: Path) -> tuple[list[float], list[list[float]]]:
-    with open(csv_path, newline="", encoding="utf-8-sig") as f:
-        rows = [row for row in csv.reader(f) if row]
+# （パス指定とアップロードの両方から使えるよう、CSV の中身の文字列を受け取る）
+def load_trajectory(text: str) -> tuple[list[float], list[list[float]]]:
+    rows = [row for row in csv.reader(text.splitlines()) if row]
     # t 形式: ヘッダ "t,joint1..joint6" + t[sec] と6関節角度[deg]
     if rows[0][0].strip().lower() == "t":
         return [float(r[0]) for r in rows[1:]], [[float(v) for v in r[1:7]] for r in rows[1:]]
