@@ -21,6 +21,9 @@ robot-viser-app/
 │   └── Dockerfile
 ├── desktop/
 │   └── launcher.py           # Windows exe 用: backend と frontend を 1 プロセスで起動
+├── docs/manual/              # 使い方マニュアル（manual.md / manual.html と、スクリーンショット img/）
+├── scripts/
+│   └── make_manual.py        # マニュアル用のスクリーンショットを撮り直すスクリプト
 └── windows/                  # Windows 版ビルド一式（build.sh, Dockerfile, installer.nsi など）
 ```
 
@@ -238,6 +241,29 @@ robot-viser-backend.exe --port 9000 --viser-port 9081   # ポートを変更
   - スタートメニューに「robot-viser」「Uninstall」を作る。
   - 「設定 → アプリ」に登録する。ここからアンインストールできる。
 - 署名していないため、初回の実行時に SmartScreen の警告が出ることがある。「詳細情報 → 実行」で起動できる。
+
+## 使い方マニュアル
+
+利用者向けのマニュアルを `docs/manual/` に置いている。`manual.html` をブラウザで開いて読む。画像は `img/` から相対パスで読むため、渡すときは `docs/manual/` フォルダごと渡す。元の Markdown（Marp）は `manual.md`。
+
+画面を改修したら、スクリーンショットを撮り直して HTML を書き出し直す。アプリを Docker で起動した状態（http://localhost:8080）で、プロジェクト直下から実行する。
+
+```bash
+# 前回の軌道や姿勢が画面に残らないよう、backend を再起動しておく
+docker compose restart backend
+
+# スクリーンショットを docs/manual/img/ に撮り直す（5 分ほどかかる）
+docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work \
+    mcr.microsoft.com/playwright/python:v1.63.0-noble \
+    sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/make_manual.py"
+
+# manual.md から manual.html を書き出す
+docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli \
+    docs/manual/manual.md -o docs/manual/manual.html
+```
+
+- 撮影はダミーの軌道 CSV（乱数のシード固定）で行う。実機のログは使わない。
+- 3D ビューアは WebGL で描画する。コンテナ内では GPU を使えないため、Xvfb 上の Chromium で Mesa の llvmpipe（CPU 描画）を使っている。ヘッドレスの既定の SwiftShader では、1 コマに 2 秒ほどかかって操作が追いつかない。
 
 ## 未対応・既知の問題
 
