@@ -12,6 +12,7 @@ robot-viser-app/
 ├── backend/                  # FastAPI（API サーバー）+ viser（3D ビューア）
 │   ├── main.py               # API エンドポイントと viser の GUI（再生スライダー・ボタン、Screenshot ボタン）
 │   ├── robot.py              # URDF の読み込み、アーム＋ハンドの合成表示、描画の取得、軌道の読み込み・再生・録画
+│   ├── collision.py          # 衝突判定（オプション）: 近似球の運動学・ヤコビアン、障害物との距離
 │   ├── assets/               # ロボットモデルと軌道サンプル（下記）
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -55,6 +56,7 @@ http://localhost:8080 を開くと、左に操作パネル、右に viser の 3D
 
 - 再生中のシークや停止：Time スライダーと Play / Stop ボタンで行う（下記「軌道の再生」）。
 - スクリーンショット：Screenshot ボタンを押すと、押したブラウザのカメラ視点と画面サイズのまま、`screenshot_YYYYmmdd_HHMMSS.png` として保存する。
+- 近似球の表示：衝突判定を有効にして起動した場合だけ、Show collision spheres のチェックボックスが出る（下記「衝突判定（オプション）」）。
 
 ## backend API
 
@@ -69,6 +71,9 @@ API ドキュメントは http://localhost:8000/docs で確認できる。ここ
 | POST | `/trajectory/upload` | multipart の `file`（CSV ファイル） | 送られてきた軌道 CSV を再生する。backend とは別の環境にあるファイルを送るときに使う |
 | POST | `/trajectory/record?format=mp4` | multipart の `file`（CSV ファイル） | 送られてきた軌道 CSV を録画し、動画（`format` は `mp4` か `gif`）を返す。録画が終わった後は通常どおり再生する |
 | GET | `/screenshot` | - | 今の 3D 表示を PNG で返す |
+| GET | `/obstacles` | - | 登録中の障害物を返す（衝突判定を有効にしたときのみ） |
+| POST | `/obstacles` | `{"obstacles": [...]}` | 障害物を丸ごと置き換えて表示する（衝突判定を有効にしたときのみ） |
+| POST | `/distances` | `{"angles": [0, 30, 0, 0, 0, 0], "max_distance": 0.1}` | 指定の関節角度での、近似球と障害物の距離・向き・ヤコビアンを返す。表示の姿勢は変えない（衝突判定を有効にしたときのみ） |
 
 - 起動時は、アームとハンドそれぞれについて、フォルダ名順で先頭のものを表示する。
 - `POST /robot` はアームの STL を読み直すため、数秒かかる。読み込み中に届いた構成の切り替えや角度の反映は、読み込みが終わるのを待ってから実行する。
@@ -127,16 +132,60 @@ viser 画面の右側のパネルでも再生を操作できる。
 | t 形式 | ヘッダ `t,joint1,...,joint6`。t[sec] と 6 関節の角度 [deg] |
 | ロボットログ形式 | メタ情報 2 行とデータヘッダ。`ElapsedTime[msec]` と `Joint(J1)[deg]`〜`Joint(J6)[deg]` の列を使う。末尾の終了情報の行は読み飛ばす |
 
+### 衝突判定（オプション）
+
+衝突回避（Riemannian Motion Policy など）の計算に使う、障害物までの距離を求める機能。既定では無効で、無効のときは上の 3 つの API も viser のチェックボックスも出ず、今までと同じ動作になる。有効にするには、次のどれかで起動する。
+
+| 起動方法 | 有効にする方法 |
+|---|---|
+| Docker | `COLLISION=1 docker compose up -d`（backend の環境変数 `COLLISION` に渡る） |
+| uvicorn（Dev Container など） | `COLLISION=1 uvicorn backend.main:app ...` |
+| Windows 版 | `robot-viser.exe --collision`、`robot-viser-backend.exe --collision` |
+
+ロボットはリンクごとの球の集まり（近似球）、障害物は球・直方体・カプセルで近似して、計算を軽くしている（1 回数 ms）。障害物は静止している前提で、`POST /obstacles` で事前に登録する（起動時は空）。座標はすべてアームの base_link（viser のワールド）基準で、単位は m。
+
+```bash
+curl -X POST localhost:8000/obstacles -H 'Content-Type: application/json' -d '{"obstacles": [
+  {"type": "box",     "name": "table", "center": [0, 1.0, 0.3], "size": [0.8, 0.4, 0.05], "rpy": [0, 0, 0.3]},
+  {"type": "sphere",  "name": "ball",  "center": [0.4, 0.6, 1.1], "radius": 0.1},
+  {"type": "capsule", "name": "pole",  "p1": [-0.5, 0.2, 0], "p2": [-0.3, 0.5, 1.2], "radius": 0.05}]}'
+curl -X POST localhost:8000/distances -H 'Content-Type: application/json' -d '{"angles": [0, 30, 0, 0, 45, 0]}'
+```
+
+| 障害物 | 項目 |
+|---|---|
+| `sphere` | `center` [m]、`radius` [m] |
+| `box` | `center` [m]、`size`（各辺の長さ）[m]、`rpy`（姿勢、省略時は 0）[rad] |
+| `capsule` | 両端の球の中心 `p1`・`p2` [m]、`radius` [m] |
+
+`POST /distances` の返り値は次のとおり。近似球の中心を RMP の制御点として、そのまま使える形にしている。
+
+```json
+{"min_distance": 0.16,
+ "control_points": [{"link": "link2", "position": [x, y, z], "radius": 0.12, "jacobian": [[6 個], [6 個], [6 個]]}, ...],
+ "pairs": [{"point": 0, "obstacle": "table", "distance": 0.31, "normal": [nx, ny, nz]}, ...]}
+```
+
+- `control_points`：近似球ごとの中心位置と半径、中心位置の関節角度に対するヤコビアン（3×6、単位は m/rad）。
+- `pairs`：近似球（`point` は `control_points` の番号）と障害物の全ての組み合わせ。`max_distance` [m] を指定すると、その距離以下の組み合わせだけを返す。
+  - `distance`：表面どうしの距離 [m]。めり込んでいると負になる。
+  - `normal`：障害物から離れる向きの単位ベクトル（球の中心を動かしたときの距離の勾配）。
+- `min_distance`：全ての組み合わせの中での最小距離。障害物がなければ `null`。
+
+近似球は、アーム・ハンドのフォルダの `collision.json` に、リンクごとにリンク座標での中心と半径 [m] を書く（下記「ロボットモデル」）。viser 画面の Show collision spheres にチェックを入れると、近似球が半透明のオレンジで表示されるので、メッシュを覆えているかを確認できる。今の `collision.json` は、STL をリンクの長手方向に区切り、各区間の頂点を包む球として作ったもので、実際より少し大きめになっている。
+
 ## ロボットモデル（backend/assets）
 
 ```
 backend/assets/
 ├── arms/<アーム名>/          # フォルダ名がアーム名になる。中の *.urdf を 1 つ使う
 │   ├── arm.urdf
-│   └── *.stl
+│   ├── *.stl
+│   └── collision.json        # 衝突判定用の近似球（なければ球なしとして扱う）
 ├── hands/<ハンド名>/         # フォルダ名がハンド名になる
 │   ├── *.urdf, *.stl
-│   └── mount.json            # アームへの取り付け位置・姿勢
+│   ├── mount.json            # アームへの取り付け位置・姿勢
+│   └── collision.json        # 衝突判定用の近似球（なければ球なしとして扱う）
 └── trajectories/             # 軌道 CSV のサンプル
 ```
 
@@ -146,6 +195,12 @@ backend/assets/
 
 ```json
 {"link": "tool0", "position": [0.0, 0.0, 0.0], "rpy": [1.5707963, 0.0, 2.3561945]}
+```
+
+`collision.json` には、リンク名ごとに近似球の `[x, y, z, 半径]`（リンク座標 [m]）を並べる。衝突判定を有効にしたときだけ使う。
+
+```json
+{"link1": [[0.015, 0.0, 0.074, 0.1705], [0.0635, 0.0, 0.2221, 0.1675]], "link2": [...]}
 ```
 
 ## Docker で実行する
@@ -226,10 +281,12 @@ PyInstaller は実行中の OS 向けのバイナリしか作れない。Linux �
 robot-viser.exe                           # 起動してブラウザで http://127.0.0.1:8080 を開く
 robot-viser.exe --no-browser              # ブラウザを自動で開かない
 robot-viser.exe --frontend-port 9080 --backend-port 9000 --viser-port 9081   # ポートを変更
+robot-viser.exe --collision               # 衝突判定（障害物の登録・距離 API）を有効にする
 
 robot-viser-backend.exe                   # API（:8000）と viser（:8081）を起動する（同じ PC からの接続のみ）
 robot-viser-backend.exe --host 0.0.0.0    # 他の PC からの接続も受け付ける
 robot-viser-backend.exe --port 9000 --viser-port 9081   # ポートを変更
+robot-viser-backend.exe --collision       # 衝突判定（障害物の登録・距離 API）を有効にする
 ```
 
 - コンソールウィンドウを閉じるか、`Ctrl+C` で停止する。
@@ -268,4 +325,6 @@ docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpte
 ## 未対応・既知の問題
 
 - Windows 版の exe は Wine 上でしか動作確認していない（起動、API、画面の配信まで）。実機の Windows での確認と、exe での録画の確認はまだ行っていない。インストーラ版は、今の構成ではまだビルドしていない。
+- 衝突判定の `--collision` オプションは、まだ exe に入っていない（exe を再ビルドすると使える）。
+- 衝突判定は、ロボット自身のリンクどうしの干渉（自己干渉）は扱わない。ハンドは可動関節なしの前提で、URDF の関節は親から子の順に書かれている前提。
 - `trajectories/trajectory.csv` は値が 0〜0.6 程度と小さく、deg として扱うとほとんど動かない。値がラジアンで書かれている可能性がある。

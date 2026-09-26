@@ -8,11 +8,14 @@ from pathlib import Path
 
 import imageio
 import numpy as np
+import trimesh
 import viser
 import viser.transforms as vtf
 import yourdfpy
 from viser.extras import ViserUrdf
 from viser.extras._urdf import _viser_name_from_frame
+
+from backend.collision import CollisionModel, pose
 
 # アーム・ハンドの候補は assets/arms/<名前>/ と assets/hands/<名前>/ のフォルダで管理する
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -27,7 +30,7 @@ def load_urdf(folder: Path) -> yourdfpy.URDF:
 class Robot:
     """viser 上のアーム＋ハンド表示。構成を差し替えても同じインスタンスで扱えるようにする。"""
 
-    def __init__(self, server: viser.ViserServer):
+    def __init__(self, server: viser.ViserServer, collision: bool = False):
         self.server = server
         self.arm: ViserUrdf | None = None
         self.hand: ViserUrdf | None = None
@@ -35,6 +38,12 @@ class Robot:
         self.hand_name: str | None = None
         # API は別スレッドで同時に呼ばれるため、差し替え途中のノードに姿勢を書き込まないよう排他する
         self._lock = threading.Lock()
+        # 衝突判定（近似球・障害物）は有効にしたときだけ使う
+        self.collision_enabled = collision
+        self.collision: CollisionModel | None = None
+        self.obstacles: list[dict] = []
+        self.show_spheres = False
+        self._sphere_handles, self._obstacle_handles = [], []
 
     # 選択可能な構成の一覧（フォルダ名）
     @staticmethod
@@ -52,17 +61,48 @@ class Robot:
             self.arm_name, self.hand_name = arm_name, hand_name
 
             # ハンドはアームの取り付けリンクのフレームを親にし、mount.json の位置・姿勢でオフセットする
+            hand_dir, hand_model = None, None
             if hand_name:
-                hand_dir = ASSETS_DIR / "hands" / hand_name
+                hand_dir, hand_model = ASSETS_DIR / "hands" / hand_name, load_urdf(ASSETS_DIR / "hands" / hand_name)
                 mount = json.loads((hand_dir / "mount.json").read_text())
                 parent = _viser_name_from_frame(arm_model.scene, mount["link"], "/visual")
-                self.hand = ViserUrdf(self.server, urdf_or_path=load_urdf(hand_dir), root_node_name=parent)
+                self.hand = ViserUrdf(self.server, urdf_or_path=hand_model, root_node_name=parent)
                 self.hand._visual_root_frame.position = mount["position"]
                 self.hand._visual_root_frame.wxyz = vtf.SO3.from_rpy_radians(*mount["rpy"]).wxyz
                 self.hand.update_cfg(np.zeros(len(self.hand.get_actuated_joint_names())))
 
+            # 近似球をアームの各リンクのフレームの子として置き、関節角度の変更に追従させる（/visual を消すと一緒に消える）
+            if self.collision_enabled:
+                self.collision = CollisionModel(ASSETS_DIR / "arms" / arm_name, arm_model, hand_dir, hand_model)
+                self._sphere_handles = [
+                    self.server.scene.add_icosphere(f"{_viser_name_from_frame(arm_model.scene, p, '/visual')}/collision_{k}", radius=r, color=(255, 140, 0), subdivisions=2, opacity=0.4, position=c, visible=self.show_spheres)
+                    for k, (p, c, r) in enumerate(zip(self.collision.parents, self.collision.centers, self.collision.radii))]
+
             # 全関節0の姿勢で表示する
             self.arm.update_cfg(np.zeros(len(self.arm.get_actuated_joint_names())))
+
+    # 近似球の表示・非表示を切り替える（構成を切り替えた後も引き継ぐ）
+    def set_spheres_visible(self, visible: bool) -> None:
+        with self._lock:
+            self.show_spheres = visible
+            for h in self._sphere_handles: h.visible = visible
+
+    # 障害物を丸ごと置き換え、半透明で描き直す
+    def set_obstacles(self, obstacles: list[dict]) -> None:
+        for h in self._obstacle_handles: h.remove()
+        self.obstacles, self._obstacle_handles = obstacles, []
+        for i, ob in enumerate(obstacles):
+            # 形状ごとに原点中心のメッシュと、置く位置・姿勢を作る（カプセルは Z 軸を p1→p2 の向きに合わせる）
+            if ob["type"] == "sphere":
+                mesh, T = trimesh.creation.icosphere(subdivisions=3, radius=ob["radius"]), trimesh.transformations.translation_matrix(ob["center"])
+            elif ob["type"] == "box":
+                mesh, T = trimesh.creation.box(extents=ob["size"]), pose(ob["center"], ob["rpy"])
+            else:
+                a, b = np.asarray(ob["p1"], dtype=float), np.asarray(ob["p2"], dtype=float)
+                mesh, T = trimesh.creation.capsule(height=np.linalg.norm(b - a), radius=ob["radius"]), trimesh.geometry.align_vectors([0, 0, 1], b - a)
+                T[:3, 3] = (a + b) / 2
+            mesh.apply_transform(T)
+            self._obstacle_handles.append(self.server.scene.add_mesh_simple(f"/obstacles/{i}", mesh.vertices, mesh.faces, color=(220, 60, 60), opacity=0.5))
 
     # 今の 3D 表示を画像 (H, W, 3) で取得する。描画はブラウザ側で行うため、指定のブラウザ（省略時は先頭の1つ）のカメラ視点・画面サイズを使う
     # （scale で解像度だけを縮められる。視野は変わらない）

@@ -2,21 +2,25 @@ import io
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import viser
 from fastapi import FastAPI, Response, UploadFile
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from backend.collision import compute_distances
 from backend.robot import Robot, TrajectoryPlayer, load_trajectory, record_trajectory
 
 # 3D ビューア（viser）を起動する。frontend（NiceGUI :8080）と衝突しないよう既定は 8081。exe では待ち受けアドレスも起動オプションで変える
 server = viser.ViserServer(host=os.environ.get("VISER_HOST", "0.0.0.0"), port=int(os.environ.get("VISER_PORT", 8081)))
 server.scene.add_grid("/grid", width=2.0, height=2.0)
 
+# 衝突判定（近似球・障害物・距離 API）は環境変数 COLLISION=1 のときだけ有効にする
+COLLISION = os.environ.get("COLLISION", "0") == "1"
+
 # 起動時はフォルダ名順で先頭のアームとハンドを表示する
-robot = Robot(server)
+robot = Robot(server, collision=COLLISION)
 configs = Robot.list_configs()
 robot.load(configs["arms"][0], configs["hands"][0] if configs["hands"] else None)
 
@@ -132,3 +136,59 @@ def post_trajectory_record(file: UploadFile, format: Literal["mp4", "gif"] = "mp
 @app.get("/screenshot")
 def get_screenshot():
     return Response(to_png(robot.render()), media_type="image/png")
+
+
+# ---- 衝突判定（COLLISION=1 のときだけ。無効なら GUI にも /docs にも出ない） ----
+if COLLISION:
+    # 近似球の表示・非表示を viser のパネルで切り替える（近似の当てはまり具合の確認用）
+    spheres_checkbox = server.gui.add_checkbox("Show collision spheres", initial_value=False)
+    @spheres_checkbox.on_update
+    def _(_event: viser.GuiEvent):
+        robot.set_spheres_visible(spheres_checkbox.value)
+
+    # 障害物の形状（座標は base_link 基準 [m]、姿勢は roll / pitch / yaw [rad]）
+    Vec3 = Annotated[list[float], Field(min_length=3, max_length=3)]
+
+    class SphereObstacle(BaseModel):
+        type: Literal["sphere"]
+        name: str
+        center: Vec3
+        radius: float
+
+    class BoxObstacle(BaseModel):
+        type: Literal["box"]
+        name: str
+        center: Vec3
+        size: Vec3
+        rpy: Vec3 = [0.0, 0.0, 0.0]
+
+    class CapsuleObstacle(BaseModel):
+        type: Literal["capsule"]
+        name: str
+        p1: Vec3
+        p2: Vec3
+        radius: float
+
+    class ObstaclesRequest(BaseModel):
+        obstacles: list[Annotated[SphereObstacle | BoxObstacle | CapsuleObstacle, Field(discriminator="type")]]
+
+    # 距離を求める関節角度[deg]（6軸）。max_distance [m] を指定すると、それ以下の距離のペアだけを返す
+    class DistancesRequest(BaseModel):
+        angles: list[float] = Field(min_length=6, max_length=6)
+        max_distance: float | None = None
+
+    # 登録中の障害物を返す
+    @app.get("/obstacles")
+    def get_obstacles():
+        return {"obstacles": robot.obstacles}
+
+    # 障害物を丸ごと置き換えて、viser に表示する
+    @app.post("/obstacles")
+    def post_obstacles(req: ObstaclesRequest):
+        robot.set_obstacles([o.model_dump() for o in req.obstacles])
+        return {"ok": True, "num_obstacles": len(req.obstacles)}
+
+    # 関節角度での近似球（制御点）の位置・ヤコビアンと、球×障害物の距離・向きを返す（表示の姿勢は変えない）
+    @app.post("/distances")
+    def post_distances(req: DistancesRequest):
+        return compute_distances(robot.collision, robot.obstacles, req.angles, req.max_distance)

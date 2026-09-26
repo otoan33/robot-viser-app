@@ -17,10 +17,11 @@ if __name__ in {"__main__", "__mp_main__"}:
     parser.add_argument("--frontend-port", type=int, default=8080)
     parser.add_argument("--viser-port", type=int, default=8081)
     parser.add_argument("--no-browser", action="store_true", help="ブラウザを自動で開かない")
+    parser.add_argument("--collision", action="store_true", help="衝突判定（近似球・障害物・距離 API）を有効にする")
     args = parser.parse_args()
 
-    # frontend・backend が import 時に接続先・待ち受けを読むため、先に設定してからページとアプリを作る
-    os.environ.update(BACKEND_URL=f"http://127.0.0.1:{args.backend_port}", VISER_HOST="127.0.0.1", VISER_PORT=str(args.viser_port))
+    # frontend・backend が import 時に接続先・待ち受け・衝突判定の有無を読むため、先に設定してからページとアプリを作る
+    os.environ.update(BACKEND_URL=f"http://127.0.0.1:{args.backend_port}", VISER_HOST="127.0.0.1", VISER_PORT=str(args.viser_port), COLLISION="1" if args.collision else "0")
     import frontend.main  # noqa: F401
     from backend.main import app
 

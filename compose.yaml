@@ -4,6 +4,9 @@ services:
     ports:
       - "8000:8000"
       - "8081:8081"
+    environment:
+      # COLLISION=1 docker compose up -d で衝突判定（近似球・障害物・距離 API）を有効にする
+      COLLISION: ${COLLISION:-0}
     restart: unless-stopped
 
   frontend:
