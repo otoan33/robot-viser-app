@@ -9,6 +9,9 @@
         mcr.microsoft.com/playwright/python:v1.63.0-noble \\
         sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && xvfb-run -a -s '-screen 0 1920x1080x24' python scripts/make_manual.py"
 
+衝突判定のスライド（13〜15）は、衝突判定を有効にして起動した状態（COLLISION=1 docker compose up -d）で、--collision を付けて撮る。
+このときは 13〜15 だけを撮る（01〜12 は、パネルにチェックボックスが写らない通常の起動で撮る）。
+
 3D ビューア（viser）は WebGL で描画する。ヘッドレスの既定（SwiftShader）では 1 コマ 2 秒ほどかかり操作が追いつかないため、
 Xvfb 上で Chromium を起動し、Mesa の llvmpipe で描画させている（1 コマ 0.4 秒ほど）。
 Playwright の公式 Docker イメージでも動くよう、標準ライブラリと playwright だけを使う。
@@ -153,10 +156,46 @@ def steps(m: Manual, csv_path: Path, work: Path):
     m.shot("12_screenshot", viewer.get_by_role("button", name="Screenshot"))
 
 
+# 撮影用のダミーの障害物（ロボットの前の台・手先付近の球・横の柱）
+DUMMY_OBSTACLES = [
+    {"type": "box", "name": "table", "center": [0.0, 1.0, 0.4], "size": [0.9, 0.5, 0.05], "rpy": [0.0, 0.0, 0.0]},
+    {"type": "sphere", "name": "ball", "center": [0.35, 0.8, 1.0], "radius": 0.12},
+    {"type": "capsule", "name": "pole", "p1": [0.6, 0.2, 0.0], "p2": [0.6, 0.2, 1.3], "radius": 0.05},
+]
+
+
+def collision_steps(m: Manual):
+    page, viewer = m.page, m.viewer
+    canvas = page.locator("iframe")
+    spheres = viewer.get_by_text("Show collision spheres").locator("xpath=../../..")  # チェックボックスの行（ラベルとボックス）
+
+    # 前回の障害物が写らないよう消してから、3D ビューアの接続を待つ（警告を閉じるのは steps と同じ）
+    page.request.post(f"{m.api}/obstacles", data={"obstacles": []})
+    viewer.get_by_text("Connected").wait_for()
+    page.wait_for_timeout(3000)
+    viewer.locator(".mantine-Notification-closeButton").evaluate_all("els => els.forEach(e => e.click())")
+
+    # 衝突判定を有効にして起動すると、3D ビューアのパネルにチェックボックスが出る
+    m.shot("13_collision_start", spheres)
+
+    # 障害物を登録すると 3D に出る。見やすいよう少し拡大してから撮る
+    page.request.post(f"{m.api}/obstacles", data={"obstacles": DUMMY_OBSTACLES})
+    page.mouse.move(840, 420)
+    for _ in range(6): page.mouse.wheel(0, -150); page.wait_for_timeout(200)
+    m.shot("14_obstacles", canvas, wait=3000)
+
+    # 近似球を表示し、関節角度を送信して姿勢に合わせて動くのを見せる（手先が球の障害物に近づく姿勢）
+    viewer.get_by_role("checkbox").evaluate("e => e.click()")
+    for label, value in zip([f"J{i}" for i in range(1, 7)], [-8, -20, 20, 0, 30, 0]): m.field(label).locator("input").fill(str(value))
+    page.get_by_role("button", name="送信", exact=True).click()
+    m.shot("15_spheres", spheres, canvas, wait=3000)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default="http://localhost:8080", help="アプリの画面の URL")
     parser.add_argument("--api", default="http://localhost:8000", help="backend API の URL（構成の切り替えの完了を待つのに使う）")
+    parser.add_argument("--collision", action="store_true", help="衝突判定のスライド（13〜15）だけを撮る（衝突判定を有効にして起動しておく）")
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -168,7 +207,8 @@ def main():
         page = browser.new_page(viewport={"width": 1280, "height": 800}, accept_downloads=True)
         page.set_default_timeout(60_000)
         page.goto(args.url)
-        steps(Manual(page, args.api), csv_path, work)
+        if args.collision: collision_steps(Manual(page, args.api))
+        else: steps(Manual(page, args.api), csv_path, work)
         browser.close()
 
 
