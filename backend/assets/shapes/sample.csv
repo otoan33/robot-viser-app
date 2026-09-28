@@ -1,6 +1,6 @@
 name,type,visible,x,y,z,x2,y2,z2,sx,sy,sz,roll,pitch,yaw,size,color,opacity
-goal,point,true,0.5,0.3,0.8,,,,,,,,,,0.04,#ff0000,
-path,line,true,0.5,-0.4,0.6,0.5,0.4,0.6,,,,,,,4,#0080ff,
-ball,sphere,true,-0.4,0.5,0.9,,,,,,,,,,0.1,#ffaa00,0.6
-pole,cylinder,true,-0.5,-0.5,0,-0.5,-0.3,1.0,,,,,,,0.04,#00aa44,
-table,box,true,0.7,0,0.3,,,,0.4,0.8,0.05,0,0,30,,#8b5a2b,0.8
+goal,point,true,500,300,800,,,,,,,,,,40,#ff0000,
+path,line,true,500,-400,600,500,400,600,,,,,,,8,#0080ff,
+ball,sphere,true,-400,500,900,,,,,,,,,,100,#ffaa00,0.6
+pole,cylinder,true,-500,-500,0,-500,-300,1000,,,,,,,40,#00aa44,
+table,box,true,700,0,300,,,,400,800,50,0,0,30,,#8b5a2b,0.8

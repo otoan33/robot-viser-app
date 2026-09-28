@@ -74,7 +74,7 @@ API ドキュメントは http://localhost:8000/docs で確認できる。ここ
 | POST | `/trajectory/record?format=mp4` | multipart の `file`（CSV ファイル） | 送られてきた軌道 CSV を録画し、動画（`format` は `mp4` か `gif`）を返す。録画が終わった後は通常どおり再生する |
 | GET | `/screenshot` | - | 今の 3D 表示を PNG で返す |
 | GET | `/shapes` | - | 表示中の補助図形の一覧を返す |
-| POST | `/shapes` | `{"shapes": [{"type": "sphere", "x": 0.5, "z": 1.0, "size": 0.05, "color": "#ff0000"}]}` | 補助図形の一覧を丸ごと置き換えて描き直す。省略した項目は既定値になる |
+| POST | `/shapes` | `{"shapes": [{"type": "sphere", "x": 500, "z": 1000, "size": 50, "color": "#ff0000"}]}` | 補助図形の一覧を丸ごと置き換えて描き直す。寸法は mm。省略した項目は既定値になる |
 | POST | `/shapes/upload` | multipart の `file`（CSV ファイル） | 送られてきた図形 CSV で一覧を丸ごと置き換える |
 | GET | `/shapes/csv` | - | 今の補助図形の一覧を CSV で返す（`/shapes/upload` でそのまま読み戻せる） |
 | GET | `/obstacles` | - | 登録中の障害物を返す（衝突判定を有効にしたときのみ） |
@@ -150,25 +150,26 @@ viser 画面の右側のパネルでも再生を操作できる。
 - 「CSV 読込」で一覧を CSV の内容で置き換え、「CSV 保存」で今の一覧を `shapes.csv` として保存する。
 - 編集画面は、開いたときの一覧を表示する。API など別の場所で一覧を変えた場合は、編集画面を開き直す（再読み込みする）。
 
-CSV はヘッダ行と、1 行 1 図形の次の列からなる（`backend/assets/shapes/sample.csv` がサンプル）。座標はアームの base_link（viser のワールド）基準で、単位は m。空欄・省略した列は既定値になる。
+CSV はヘッダ行と、1 行 1 図形の次の列からなる（`backend/assets/shapes/sample.csv` がサンプル）。座標はアームの base_link（viser のワールド）基準。寸法（座標・大きさ・太さ・辺の長さ）はすべて mm で指定する。空欄・省略した列は既定値になる。
 
 ```
 name,type,visible,x,y,z,x2,y2,z2,sx,sy,sz,roll,pitch,yaw,size,color,opacity
-ball,sphere,true,-0.4,0.5,0.9,,,,,,,,,,0.1,#ffaa00,0.6
-table,box,true,0.7,0,0.3,,,,0.4,0.8,0.05,0,0,30,,#8b5a2b,0.8
+ball,sphere,true,-400,500,900,,,,,,,,,,100,#ffaa00,0.6
+table,box,true,700,0,300,,,,400,800,50,0,0,30,,#8b5a2b,0.8
 ```
 
-| type | 使う列 | `size` の意味（省略時） |
+| type | 使う列 | `size` の意味（省略時） [mm] |
 |---|---|---|
-| `point`（点） | `x,y,z`（位置） | 点の大きさ [m]（0.03） |
-| `line`（線） | `x,y,z`（始点）、`x2,y2,z2`（終点） | 太さ [px]（3） |
-| `sphere`（球） | `x,y,z`（中心） | 半径 [m]（0.05） |
-| `cylinder`（円柱） | `x,y,z`・`x2,y2,z2`（両端の面の中心） | 半径 [m]（0.03） |
-| `box`（直方体） | `x,y,z`（中心）、`sx,sy,sz`（辺の長さ [m]、省略時 0.1）、`roll,pitch,yaw`（姿勢 [deg]、省略時 0） | 使わない |
+| `point`（点） | `x,y,z`（位置） | 点の大きさ（30） |
+| `line`（線） | `x,y,z`（始点）、`x2,y2,z2`（終点） | 太さ（5） |
+| `sphere`（球） | `x,y,z`（中心） | 半径（50） |
+| `cylinder`（円柱） | `x,y,z`・`x2,y2,z2`（両端の面の中心） | 半径（30） |
+| `box`（直方体） | `x,y,z`（中心）、`sx,sy,sz`（辺の長さ [mm]、省略時 100）、`roll,pitch,yaw`（姿勢 [deg]、省略時 0） | 使わない |
 
 - 共通の列：`name`（名前）、`visible`（表示するか、省略時 true）、`color`（`#RRGGBB`、省略時は灰）、`opacity`（不透明度 0〜1、省略時 1）。
 - 点と線は、viser が不透明度に対応していないため、`opacity` を使わない。
-- 姿勢は、関節角度と同じく deg で指定する（衝突判定の障害物の `rpy` は rad なので注意）。
+- 姿勢は、関節角度と同じく deg で指定する。
+- 衝突判定の障害物（下記）は m・rad で指定するので、単位が異なる点に注意する。
 
 ### 衝突判定（オプション）
 

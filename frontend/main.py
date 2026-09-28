@@ -70,16 +70,16 @@ async def index(request: Request):
 
 # 図形の種類の表示名と、フォームに出す入力欄（1 行ごとの (項目, ラベル) の並び）
 TYPES = {"point": "点", "line": "線", "sphere": "球", "cylinder": "円柱", "box": "直方体"}
-XYZ = lambda label, sfx="": [(f"x{sfx}", f"{label} x [m]"), (f"y{sfx}", "y"), (f"z{sfx}", "z")]
+XYZ = lambda label, sfx="": [(f"x{sfx}", f"{label} x [mm]"), (f"y{sfx}", "y"), (f"z{sfx}", "z")]
 FIELDS = {
-    "point": [XYZ("位置"), [("size", "大きさ [m]")]],
-    "line": [XYZ("始点"), XYZ("終点", "2"), [("size", "太さ [px]")]],
-    "sphere": [XYZ("中心"), [("size", "半径 [m]")]],
-    "cylinder": [XYZ("端点1"), XYZ("端点2", "2"), [("size", "半径 [m]")]],
-    "box": [XYZ("中心"), [("sx", "辺 x [m]"), ("sy", "y"), ("sz", "z")], [("roll", "roll [deg]"), ("pitch", "pitch"), ("yaw", "yaw")]],
+    "point": [XYZ("位置"), [("size", "大きさ [mm]")]],
+    "line": [XYZ("始点"), XYZ("終点", "2"), [("size", "太さ [mm]")]],
+    "sphere": [XYZ("中心"), [("size", "半径 [mm]")]],
+    "cylinder": [XYZ("端点1"), XYZ("端点2", "2"), [("size", "半径 [mm]")]],
+    "box": [XYZ("中心"), [("sx", "辺 x [mm]"), ("sy", "y"), ("sz", "z")], [("roll", "roll [deg]"), ("pitch", "pitch"), ("yaw", "yaw")]],
 }
 # 線・円柱は追加したときに長さがあるよう、終点をずらしておく（その他の項目は backend の既定値）
-NEW = {"line": {"x2": 0.3}, "cylinder": {"z2": 0.3}}
+NEW = {"line": {"x2": 300}, "cylinder": {"z2": 300}}
 
 
 # 図形の編集画面（メイン画面から別ウィンドウで開く）。一覧は backend が持ち、変更のたびに丸ごと送って即座に描き直させる
@@ -125,7 +125,7 @@ async def shapes_page():
         sel["i"] = min(sel["i"], len(shapes) - 1) if shapes else None
         await push(reload=True)
 
-    # 種類を変えたら、大きさはその種類の既定値に戻す（線の太さ[px]が球の半径[m]になったりしないように）
+    # 種類を変えたら、大きさはその種類の既定値に戻す（線の太さのまま球の半径になって、小さすぎたりしないように）
     async def change_type(s, t):
         s["type"], s["size"] = t, None
         await push(reload=True)
@@ -179,7 +179,7 @@ async def shapes_page():
         for row in FIELDS[s["type"]]:
             with ui.row().classes("w-full no-wrap"):
                 for key, label in row:
-                    ui.number(label, value=s[key], step=1 if key in ("roll", "pitch", "yaw") or (key, s["type"]) == ("size", "line") else 0.01, on_change=lambda e, key=key: update(s, key, e.value)).classes("w-40")
+                    ui.number(label, value=s[key], step=1, on_change=lambda e, key=key: update(s, key, e.value)).classes("w-40")
         with ui.row().classes("w-full items-center no-wrap"):
             ui.color_input("色", value=s["color"], on_change=lambda e: update(s, "color", e.value)).classes("w-40")
             # 点・線は viser が不透明度に対応していないので出さない

@@ -1,5 +1,5 @@
 """viser に重ねて描く補助図形（点・線・球・円柱・直方体）。JSON・CSV・画面のフォームで同じフラットな形（CSV の 1 行）として扱う。
-座標はアームの base_link（= viser のワールド）基準 [m]、姿勢は roll / pitch / yaw [deg]。"""
+寸法（座標・大きさ）はすべて mm で持ち、描くときに viser の m に直す。座標はアームの base_link（= viser のワールド）基準、姿勢は roll / pitch / yaw [deg]。"""
 import csv
 import io
 import threading
@@ -11,8 +11,8 @@ import viser
 import viser.transforms as vtf
 from pydantic import BaseModel, Field, model_validator
 
-# size の意味は種類ごとに異なる（点: 大きさ[m]、線: 太さ[px]、球・円柱: 半径[m]、直方体: 使わない）。省略時はこの値にする
-DEFAULT_SIZE = {"point": 0.03, "line": 3.0, "sphere": 0.05, "cylinder": 0.03, "box": 0.0}
+# size の意味は種類ごとに異なる（点: 大きさ、線: 太さ、球・円柱: 半径、直方体: 使わない。いずれも mm）。省略時はこの値にする
+DEFAULT_SIZE = {"point": 30.0, "line": 5.0, "sphere": 50.0, "cylinder": 30.0, "box": 0.0}
 
 
 class Shape(BaseModel):
@@ -28,9 +28,9 @@ class Shape(BaseModel):
     y2: float = 0.0
     z2: float = 0.0
     # 直方体の辺の長さと姿勢
-    sx: float = 0.1
-    sy: float = 0.1
-    sz: float = 0.1
+    sx: float = 100.0
+    sy: float = 100.0
+    sz: float = 100.0
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
@@ -74,13 +74,14 @@ def draw_shapes(server: viser.ViserServer, shapes: list[dict]) -> None:
         server.scene.add_frame("/shapes", show_axes=False)
         for i, s in enumerate(shapes):
             if not s["visible"]: continue
-            name, color, size = f"/shapes/{i}", tuple(int(s["color"][k:k + 2], 16) for k in (1, 3, 5)), s["size"]
-            p1, p2 = np.array([s["x"], s["y"], s["z"]], dtype=float), np.array([s["x2"], s["y2"], s["z2"]], dtype=float)
+            # mm で持っている寸法を viser の m に直す
+            name, color, size = f"/shapes/{i}", tuple(int(s["color"][k:k + 2], 16) for k in (1, 3, 5)), s["size"] / 1000
+            p1, p2 = np.array([s["x"], s["y"], s["z"]], dtype=float) / 1000, np.array([s["x2"], s["y2"], s["z2"]], dtype=float) / 1000
             opacity = s["opacity"] if s["opacity"] < 1 else None
             if s["type"] == "point":
                 server.scene.add_point_cloud(name, points=p1[None], colors=color, point_size=size, point_shape="circle")
             elif s["type"] == "line":
-                server.scene.add_line_segments(name, points=np.array([[p1, p2]]), colors=color, thickness=size, thickness_units="screen")
+                server.scene.add_line_segments(name, points=np.array([[p1, p2]]), colors=color, thickness=size, thickness_units="world")
             elif s["type"] == "sphere":
                 server.scene.add_icosphere(name, radius=size, color=color, opacity=opacity, position=p1)
             elif s["type"] == "cylinder":
@@ -90,4 +91,4 @@ def draw_shapes(server: viser.ViserServer, shapes: list[dict]) -> None:
                 server.scene.add_cylinder(name, radius=size, height=np.linalg.norm(d), color=color, opacity=opacity, wxyz=wxyz, position=(p1 + p2) / 2)
             else:
                 wxyz = vtf.SO3.from_rpy_radians(*np.deg2rad([s["roll"], s["pitch"], s["yaw"]])).wxyz
-                server.scene.add_box(name, color=color, dimensions=(s["sx"], s["sy"], s["sz"]), opacity=opacity, wxyz=wxyz, position=p1)
+                server.scene.add_box(name, color=color, dimensions=np.array([s["sx"], s["sy"], s["sz"]]) / 1000, opacity=opacity, wxyz=wxyz, position=p1)
