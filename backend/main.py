@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.collision import compute_distances
 from backend.robot import Robot, TrajectoryPlayer, load_trajectory, record_trajectory
+from backend.shapes import Shape, draw_shapes, dump_shapes_csv, load_shapes_csv
 
 # 3D ビューア（viser）を起動する。frontend（NiceGUI :8080）と衝突しないよう既定は 8081。exe では待ち受けアドレスも起動オプションで変える
 server = viser.ViserServer(host=os.environ.get("VISER_HOST", "0.0.0.0"), port=int(os.environ.get("VISER_PORT", 8081)))
@@ -136,6 +137,45 @@ def post_trajectory_record(file: UploadFile, format: Literal["mp4", "gif"] = "mp
 @app.get("/screenshot")
 def get_screenshot():
     return Response(to_png(robot.render()), media_type="image/png")
+
+
+# ---- 補助図形（点・線・球・円柱・直方体）。一覧は backend が持ち、丸ごと置き換えて描き直す ----
+shapes: list[dict] = []
+
+
+# 一覧を置き換えて描き直し、置き換え後の一覧（省略した項目は既定値で埋まる）を返す
+def set_shapes(new: list[dict]) -> dict:
+    shapes[:] = new
+    draw_shapes(server, shapes)
+    return {"shapes": shapes}
+
+
+class ShapesRequest(BaseModel):
+    shapes: list[Shape]
+
+
+# 表示中の図形の一覧を返す
+@app.get("/shapes")
+def get_shapes():
+    return {"shapes": shapes}
+
+
+# 図形の一覧を丸ごと置き換える
+@app.post("/shapes")
+def post_shapes(req: ShapesRequest):
+    return set_shapes([s.model_dump() for s in req.shapes])
+
+
+# 送られてきた図形 CSV で一覧を丸ごと置き換える
+@app.post("/shapes/upload")
+def post_shapes_upload(file: UploadFile):
+    return set_shapes(load_shapes_csv(file.file.read().decode("utf-8-sig")))
+
+
+# 今の図形の一覧を CSV で返す（/shapes/upload でそのまま読み戻せる）
+@app.get("/shapes/csv")
+def get_shapes_csv():
+    return Response(dump_shapes_csv(shapes), media_type="text/csv")
 
 
 # ---- 衝突判定（COLLISION=1 のときだけ。無効なら GUI にも /docs にも出ない） ----
