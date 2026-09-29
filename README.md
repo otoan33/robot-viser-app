@@ -360,7 +360,7 @@ docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpte
     docs/manual/manual.md --pdf --allow-local-files -o docs/manual/manual.pdf
 ```
 
-衝突判定のスライド（13〜15）は、衝突判定を有効にして起動した状態で、`--collision` を付けて撮る（13〜15 だけを撮る）。撮り終わったら、通常の起動に戻しておく。
+衝突判定のスライド（20〜22）は、衝突判定を有効にして起動した状態で、`--collision` を付けて撮る（20〜22 だけを撮る）。撮り終わったら、通常の起動に戻しておく。
 
 ```bash
 COLLISION=1 docker compose up -d && docker compose restart backend
@@ -370,8 +370,9 @@ docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/wo
 docker compose up -d
 ```
 
-- 撮影はダミーの軌道 CSV（乱数のシード固定）で行う。実機のログは使わない。衝突判定のスライドの障害物も、撮影スクリプトに書いたダミーの配置で登録する。
-- 01〜12 は通常の起動で撮る。衝突判定を有効にすると、3D ビューアのパネルに Show collision spheres が増えて写り込むため。
+- 撮影はダミーの軌道 CSV（乱数のシード固定）で行う。実機のログは使わない。図形 CSV と衝突判定のスライドの障害物も、撮影スクリプトに書いたダミーの配置を使う。
+- 図形ウィンドウのスライド（13〜19）は、別ウィンドウの図形の編集画面を、メイン画面の左に重ねて 1 枚にしている。
+- 01〜19 は通常の起動で撮る。衝突判定を有効にすると、3D ビューアのパネルに Show collision spheres が増えて写り込むため。
 - 3D ビューアは WebGL で描画する。コンテナ内では GPU を使えないため、Xvfb 上の Chromium で Mesa の llvmpipe（CPU 描画）を使っている。ヘッドレスの既定の SwiftShader では、1 コマに 2 秒ほどかかって操作が追いつかない。
 
 ## 未対応・既知の問題
