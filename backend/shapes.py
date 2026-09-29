@@ -2,6 +2,7 @@
 寸法（座標・大きさ）はすべて mm で持ち、描くときに viser の m に直す。座標はアームの base_link（= viser のワールド）基準、姿勢は roll / pitch / yaw [deg]。"""
 import csv
 import io
+import itertools
 import threading
 from typing import Literal
 
@@ -65,17 +66,19 @@ def dump_shapes_csv(shapes: list[dict]) -> str:
 
 # 画面での連続編集で API が同時に呼ばれても、消す→描くが混ざらないよう排他する
 _lock = threading.Lock()
+# viser のブラウザ側は、消した図形と同じ名前で描き直すと前の位置を引き継ぐ（位置が既定の原点の点・線がずれる）ため、描くたびに別の名前にする
+_serial = itertools.count()
 
 
-# 図形をすべて消し、表示する図形を /shapes/<番号> に描き直す
+# 図形をすべて消し、表示する図形を /shapes/<通し番号> に描き直す
 def draw_shapes(server: viser.ViserServer, shapes: list[dict]) -> None:
     with _lock:
         server.scene.remove_by_name("/shapes")
         server.scene.add_frame("/shapes", show_axes=False)
-        for i, s in enumerate(shapes):
+        for s in shapes:
             if not s["visible"]: continue
             # mm で持っている寸法を viser の m に直す
-            name, color, size = f"/shapes/{i}", tuple(int(s["color"][k:k + 2], 16) for k in (1, 3, 5)), s["size"] / 1000
+            name, color, size = f"/shapes/{next(_serial)}", tuple(int(s["color"][k:k + 2], 16) for k in (1, 3, 5)), s["size"] / 1000
             p1, p2 = np.array([s["x"], s["y"], s["z"]], dtype=float) / 1000, np.array([s["x2"], s["y2"], s["z2"]], dtype=float) / 1000
             opacity = s["opacity"] if s["opacity"] < 1 else None
             if s["type"] == "point":
