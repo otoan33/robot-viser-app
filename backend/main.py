@@ -9,7 +9,7 @@ from fastapi import FastAPI, Response, UploadFile
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from backend.collision import compute_distances
+from backend.collision import compute_distances, dump_obstacles_csv, load_obstacles_csv
 from backend.robot import Robot, TrajectoryPlayer, load_trajectory, record_trajectory
 from backend.shapes import Shape, draw_shapes, dump_shapes_csv, load_shapes_csv
 
@@ -94,6 +94,29 @@ class AnglesRequest(BaseModel):
 @app.post("/joints")
 def post_joints(req: AnglesRequest):
     robot.set_angles(req.angles)
+    return {"ok": True}
+
+
+# ツール座標（フランジ基準の位置 x, y, z [mm] と、zyx オイラー角 u, v, w [deg]。u: z 軸、v: y 軸、w: x 軸まわり）
+class ToolRequest(BaseModel):
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    u: float = 0.0
+    v: float = 0.0
+    w: float = 0.0
+
+
+# 設定中のツール座標を返す
+@app.get("/tool")
+def get_tool():
+    return robot.tool
+
+
+# ツール座標を設定し、ツール座標系を描き直す
+@app.post("/tool")
+def post_tool(req: ToolRequest):
+    robot.set_tool(req.model_dump())
     return {"ok": True}
 
 
@@ -227,6 +250,16 @@ if COLLISION:
     def post_obstacles(req: ObstaclesRequest):
         robot.set_obstacles([o.model_dump() for o in req.obstacles])
         return {"ok": True, "num_obstacles": len(req.obstacles)}
+
+    # 送られてきた障害物 CSV（寸法 mm、姿勢 deg）で丸ごと置き換える。API と同じ形に直してから、同じ検証を通す
+    @app.post("/obstacles/upload")
+    def post_obstacles_upload(file: UploadFile):
+        return post_obstacles(ObstaclesRequest(obstacles=load_obstacles_csv(file.file.read().decode("utf-8-sig"))))
+
+    # 登録中の障害物を CSV（mm・deg）で返す（/obstacles/upload でそのまま読み戻せる）
+    @app.get("/obstacles/csv")
+    def get_obstacles_csv():
+        return Response(dump_obstacles_csv(robot.obstacles), media_type="text/csv")
 
     # 関節角度での近似球（制御点）の位置・ヤコビアンと、球×障害物の距離・向きを返す（表示の姿勢は変えない）
     @app.post("/distances")

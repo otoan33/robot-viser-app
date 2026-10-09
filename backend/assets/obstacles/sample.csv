@@ -1,0 +1,4 @@
+name,type,x,y,z,x2,y2,z2,sx,sy,sz,roll,pitch,yaw,radius
+table,box,0,1000,300,,,,800,400,50,0,0,30,
+ball,sphere,400,600,1100,,,,,,,,,,100
+pole,capsule,-500,200,0,-300,500,1200,,,,,,,50

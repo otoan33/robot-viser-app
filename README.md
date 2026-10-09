@@ -12,13 +12,13 @@ robot-viser-app/
 ├── backend/                  # FastAPI（API サーバー）+ viser（3D ビューア）
 │   ├── main.py               # API エンドポイントと viser の GUI（再生スライダー・ボタン、Screenshot ボタン）
 │   ├── robot.py              # URDF の読み込み、アーム＋ハンドの合成表示、描画の取得、軌道の読み込み・再生・録画
-│   ├── collision.py          # 衝突判定（オプション）: 近似球の運動学・ヤコビアン、障害物との距離
+│   ├── collision.py          # 衝突判定（オプション）: 近似球の運動学・ヤコビアン、障害物との距離、障害物 CSV の読み書き
 │   ├── shapes.py             # 補助図形（点・線・球・円柱・直方体）の CSV 読み書きと描画
 │   ├── assets/               # ロボットモデルと軌道サンプル（下記）
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                 # NiceGUI（画面）。backend を HTTP で呼び出す
-│   ├── main.py               # 操作パネル（構成・関節角度・軌道）と viser の埋め込み表示、図形の編集ウィンドウ
+│   ├── main.py               # 操作パネル（構成・関節角度・軌道・障害物）と viser の埋め込み表示、図形の編集ウィンドウ
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── desktop/
@@ -51,8 +51,10 @@ http://localhost:8080 を開くと、左に操作パネル、右に viser の 3D
 |---|---|
 | 構成 | アームとハンドをプルダウンで選ぶ。選ぶとすぐ `POST /robot` で表示を切り替える。ハンドは「なし」も選べる |
 | 関節角度 [deg] | J1〜J6 の角度を入力し、「送信」で `POST /joints` を送る |
+| ツール座標 [mm, deg] | X, Y, Z, U, V, W を入力し、「送信」で `POST /tool` を送る（下記「ツール座標系」） |
 | 軌道 | 「CSV を選択」で軌道 CSV を選ぶと、すぐ `POST /trajectory/upload` へ送って再生する。点数と再生時間を通知で表示する。「録画する」にチェックを入れて形式（mp4 / gif）を選んでおくと、代わりに `POST /trajectory/record` で録画し、`<CSV名>.mp4` または `<CSV名>.gif` をダウンロードする。録画が終わった後は、通常どおり再生する |
 | 図形 | 左上の「図形」ボタンで、図形の編集画面を別ウィンドウで開く（下記「補助図形」） |
+| 障害物 | 衝突判定を有効にして起動した場合だけ出る。「CSV 読込」で障害物 CSV を `POST /obstacles/upload` へ送って登録し、「CSV 保存」で登録中の障害物を `obstacles.csv` として保存する（下記「衝突判定（オプション）」） |
 
 右側の viser 画面のパネルでは、次の操作ができる。
 
@@ -69,6 +71,8 @@ API ドキュメントは http://localhost:8000/docs で確認できる。ここ
 | GET | `/robots` | - | 選べるアーム・ハンドの一覧と、表示中の構成を返す |
 | POST | `/robot` | `{"arm": "robotA", "hand": "hand_jig"}` | 表示する構成を切り替える。`hand` を省略するか `null` にすると、アームのみを表示する |
 | POST | `/joints` | `{"angles": [30, -20, 0, 0, 0, 0]}` | 6軸の関節角度 [deg] を反映する。順序はアーム URDF の可動関節の定義順 |
+| GET | `/tool` | - | 設定中のツール座標を返す |
+| POST | `/tool` | `{"x": 0, "y": 0, "z": 150, "u": 45}` | ツール座標を設定し、ツール座標系を描き直す。省略した項目は 0 になる |
 | POST | `/trajectory` | `{"csv_path": "/app/backend/assets/trajectories/test.csv"}` | 軌道 CSV を読み込んで再生する。パスは backend から見えるパスを指定する |
 | POST | `/trajectory/upload` | multipart の `file`（CSV ファイル） | 送られてきた軌道 CSV を再生する。backend とは別の環境にあるファイルを送るときに使う |
 | POST | `/trajectory/record?format=mp4` | multipart の `file`（CSV ファイル） | 送られてきた軌道 CSV を録画し、動画（`format` は `mp4` か `gif`）を返す。録画が終わった後は通常どおり再生する |
@@ -79,10 +83,18 @@ API ドキュメントは http://localhost:8000/docs で確認できる。ここ
 | GET | `/shapes/csv` | - | 今の補助図形の一覧を CSV で返す（`/shapes/upload` でそのまま読み戻せる） |
 | GET | `/obstacles` | - | 登録中の障害物を返す（衝突判定を有効にしたときのみ） |
 | POST | `/obstacles` | `{"obstacles": [...]}` | 障害物を丸ごと置き換えて表示する（衝突判定を有効にしたときのみ） |
+| POST | `/obstacles/upload` | multipart の `file`（CSV ファイル） | 送られてきた障害物 CSV で障害物を丸ごと置き換えて表示する（衝突判定を有効にしたときのみ） |
+| GET | `/obstacles/csv` | - | 登録中の障害物を CSV で返す（`/obstacles/upload` でそのまま読み戻せる。衝突判定を有効にしたときのみ） |
 | POST | `/distances` | `{"angles": [0, 30, 0, 0, 0, 0], "max_distance": 0.1}` | 指定の関節角度での、近似球と障害物の距離・向き・ヤコビアンを返す。表示の姿勢は変えない（衝突判定を有効にしたときのみ） |
 
 - 起動時は、アームとハンドそれぞれについて、フォルダ名順で先頭のものを表示する。
 - `POST /robot` はアームの STL を読み直すため、数秒かかる。読み込み中に届いた構成の切り替えや角度の反映は、読み込みが終わるのを待ってから実行する。
+
+### ツール座標系
+
+ツール座標系は、フランジ（アーム URDF の先端リンク。同梱のアームでは `tool0`）を基準に、x, y, z [mm] と u, v, w [deg] で指定する。u, v, w は zyx オイラー角で、回転行列は Rz(u)・Ry(v)・Rx(w)（u: z 軸、v: y 軸、w: x 軸まわり。補助図形の yaw / pitch / roll の順に対応する）。
+
+viser 上ではフランジの子として座標軸（x: 赤、y: 緑、z: 青）を描くので、関節角度を変えると追従する。起動時はすべて 0（フランジと同じ位置・姿勢）で、アーム・ハンドを切り替えても設定は引き継ぐ。
 
 ### 録画とスクリーンショットの仕組み
 
@@ -169,11 +181,11 @@ table,box,true,700,0,300,,,,400,800,50,0,0,30,,#8b5a2b,0.8
 - 共通の列：`name`（名前）、`visible`（表示するか、省略時 true）、`color`（`#RRGGBB`、省略時は灰）、`opacity`（不透明度 0〜1、省略時 1）。
 - 点と線は、viser が不透明度に対応していないため、`opacity` を使わない。
 - 姿勢は、関節角度と同じく deg で指定する。
-- 衝突判定の障害物（下記）は m・rad で指定するので、単位が異なる点に注意する。
+- 衝突判定の障害物（下記）は、JSON の API では m・rad で指定するので、単位が異なる点に注意する（障害物 CSV は図形と同じ mm・deg）。
 
 ### 衝突判定（オプション）
 
-衝突回避（Riemannian Motion Policy など）の計算に使う、障害物までの距離を求める機能。既定では無効で、無効のときは上の 3 つの API も viser のチェックボックスも出ず、今までと同じ動作になる。有効にするには、次のどれかで起動する。
+衝突回避（Riemannian Motion Policy など）の計算に使う、障害物までの距離を求める機能。既定では無効で、無効のときは上の障害物・距離の API も、画面の障害物パネルも viser のチェックボックスも出ず、今までと同じ動作になる。有効にするには、次のどれかで起動する。
 
 | 起動方法 | 有効にする方法 |
 |---|---|
@@ -196,6 +208,26 @@ curl -X POST localhost:8000/distances -H 'Content-Type: application/json' -d '{"
 | `sphere` | `center` [m]、`radius` [m] |
 | `box` | `center` [m]、`size`（各辺の長さ）[m]、`rpy`（姿勢、省略時は 0）[rad] |
 | `capsule` | 両端の球の中心 `p1`・`p2` [m]、`radius` [m] |
+
+障害物はファイルからも登録できる。画面の障害物パネルの「CSV 読込」か、`POST /obstacles/upload` で CSV を送ると、その内容で丸ごと置き換える。CSV は補助図形と同じく、寸法は mm、姿勢は deg で書く（`backend/assets/obstacles/sample.csv` がサンプル）。空欄・省略した列は 0 になる。
+
+```
+name,type,x,y,z,x2,y2,z2,sx,sy,sz,roll,pitch,yaw,radius
+table,box,0,1000,300,,,,800,400,50,0,0,30,
+ball,sphere,400,600,1100,,,,,,,,,,100
+pole,capsule,-500,200,0,-300,500,1200,,,,,,,50
+```
+
+| type | 使う列 |
+|---|---|
+| `sphere` | `x,y,z`（中心）、`radius` |
+| `box` | `x,y,z`（中心）、`sx,sy,sz`（辺の長さ）、`roll,pitch,yaw`（姿勢 [deg]） |
+| `capsule` | `x,y,z`・`x2,y2,z2`（両端の球の中心）、`radius` |
+
+```
+curl -F file=@backend/assets/obstacles/sample.csv localhost:8000/obstacles/upload
+curl localhost:8000/obstacles/csv -o obstacles.csv
+```
 
 `POST /distances` の返り値は次のとおり。近似球の中心を RMP の制御点として、そのまま使える形にしている。
 
@@ -225,6 +257,8 @@ backend/assets/
 │   ├── *.urdf, *.stl
 │   ├── mount.json            # アームへの取り付け位置・姿勢
 │   └── collision.json        # 衝突判定用の近似球（なければ球なしとして扱う）
+├── obstacles/                # 障害物 CSV のサンプル
+├── shapes/                   # 補助図形 CSV のサンプル
 └── trajectories/             # 軌道 CSV のサンプル
 ```
 
@@ -244,9 +278,15 @@ backend/assets/
 
 ## Docker で実行する
 
+初回（または `requirements.txt` を変えたとき）だけイメージをビルドする。
+
 ```bash
 docker compose up -d --build
 ```
+
+`backend/` と `frontend/` はコンテナにバインドマウントしているため、コードの変更にビルドは要らない。backend は `uvicorn --reload` で保存すると自動で再読み込みされる。frontend は `docker compose restart frontend` で反映する。compose.yaml を書き換えたときは `docker compose up -d --no-build --pull never` を実行する。
+
+オフラインでも、`requirements.txt` を変えていなければビルドは通る（`pip install` の層はキャッシュから使われる）。`python:3.12-slim` のメタデータ取得で失敗する場合は、`docker buildx use default` で docker ドライバの builder にするか、`DOCKER_BUILDKIT=0 docker compose build` でレガシービルダーを使う。`requirements.txt` を変えた場合は `pip install` が再実行されるため、オフラインではビルドできない。
 
 - 画面（NiceGUI）: http://localhost:8080
 - 3D ビューア（viser）: http://localhost:8081

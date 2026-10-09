@@ -37,6 +37,15 @@ async def index(request: Request):
                 async def send_joints(): (await client.post("/joints", json={"angles": [n.value for n in inputs]})).raise_for_status()
                 ui.button("送信", on_click=send_joints)
 
+            # ツール座標（フランジ基準の x, y, z [mm] と zyx オイラー角 u, v, w [deg]）を入力し、まとめて送る
+            with ui.card().classes("w-full"):
+                ui.label("ツール座標 [mm, deg]").classes("text-lg font-bold")
+                tool = (await client.get("/tool")).json()
+                with ui.grid(columns=3).classes("w-full"):
+                    tool_inputs = {k: ui.number(k.upper(), value=v) for k, v in tool.items()}
+                async def send_tool(): (await client.post("/tool", json={k: n.value for k, n in tool_inputs.items()})).raise_for_status()
+                ui.button("送信", on_click=send_tool)
+
             # 軌道 CSV を backend へ転送して再生させる（シーク・停止は viser 画面の Time スライダーと Play/Stop で行う）
             with ui.card().classes("w-full"):
                 ui.label("軌道").classes("text-lg font-bold")
@@ -62,6 +71,25 @@ async def index(request: Request):
                 # アップロード部品は枠が大きいので隠し、ボタンからファイル選択ダイアログだけを開く
                 upload = ui.upload(auto_upload=True, on_upload=upload_trajectory).props("accept=.csv").classes("hidden")
                 ui.button("CSV を選択", on_click=lambda: upload.run_method("pickFiles"))
+
+            # 衝突判定の障害物を CSV で登録・保存する（衝突判定が無効な backend には /obstacles がないので出さない）
+            obstacles = await client.get("/obstacles")
+            if obstacles.status_code == 200:
+                with ui.card().classes("w-full"):
+                    ui.label("障害物").classes("text-lg font-bold")
+                    count = ui.label(f"登録中: {len(obstacles.json()['obstacles'])} 個")
+                    async def upload_obstacles(e):
+                        res = await client.post("/obstacles/upload", files={"file": (e.file.name, await e.file.read())})
+                        res.raise_for_status()
+                        count.text = f"登録中: {res.json()['num_obstacles']} 個"
+                        ui.notify(f"{e.file.name}: {res.json()['num_obstacles']} 個の障害物を登録しました")
+                        obstacles_upload.reset()
+                    async def download_obstacles():
+                        ui.download.content((await client.get("/obstacles/csv")).content, "obstacles.csv")
+                    obstacles_upload = ui.upload(auto_upload=True, on_upload=upload_obstacles).props("accept=.csv").classes("hidden")
+                    with ui.row():
+                        ui.button("CSV 読込", icon="upload_file", on_click=lambda: obstacles_upload.run_method("pickFiles"))
+                        ui.button("CSV 保存", icon="download", on_click=download_obstacles).props("flat")
 
         # 右: viser の 3D ビューア。ブラウザが直接 viser に接続するので、このページと同じホスト名を使う
         viser_url = os.environ.get("VISER_URL", f"http://{request.url.hostname}:{os.environ.get('VISER_PORT', 8081)}")

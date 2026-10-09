@@ -1,5 +1,7 @@
 """衝突回避（RMP など）用に、ロボットを球の集まりで近似し、障害物（球・直方体・カプセル）との距離とヤコビアンを求める。
 座標はすべてアームの base_link（= viser のワールド）基準、単位は m。"""
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -80,6 +82,40 @@ class CollisionModel:
         mask = np.array([[i in ancestors[p] for i in range(len(q))] for p in self.parents]).reshape(-1, len(q))
         J = (np.cross(A, P[:, None] - O) * mask[..., None]).transpose(0, 2, 1)
         return P, J
+
+
+# 障害物 CSV の列。手で書きやすいよう、図形 CSV と同じく寸法は mm、姿勢は deg で書く（API の障害物は m・rad）
+OBSTACLE_COLUMNS = ["name", "type", "x", "y", "z", "x2", "y2", "z2", "sx", "sy", "sz", "roll", "pitch", "yaw", "radius"]
+
+
+# 障害物 CSV（ヘッダ行 + 1 行 1 障害物）を、API と同じ形（m・rad）の障害物のリストにする。空欄・省略した列は 0 にする
+def load_obstacles_csv(text: str) -> list[dict]:
+    obstacles = []
+    for row in csv.DictReader(io.StringIO(text)):
+        v = {k: float(row.get(k) or 0) for k in OBSTACLE_COLUMNS[2:]}
+        m = lambda *keys: [v[k] / 1000 for k in keys]
+        p1, r = m("x", "y", "z"), v["radius"] / 1000
+        shape = {"sphere": {"center": p1, "radius": r},
+                 "box": {"center": p1, "size": m("sx", "sy", "sz"), "rpy": np.deg2rad([v["roll"], v["pitch"], v["yaw"]]).tolist()},
+                 "capsule": {"p1": p1, "p2": m("x2", "y2", "z2"), "radius": r}}[row["type"]]
+        obstacles.append({"type": row["type"], "name": row["name"], **shape})
+    return obstacles
+
+
+# 障害物のリストを、読み込みと同じ列（mm・deg）の CSV にする（単位の換算で出る端数は丸める）
+def dump_obstacles_csv(obstacles: list[dict]) -> str:
+    cols = lambda keys, values, scale=1000: dict(zip(keys, np.round(np.asarray(values, dtype=float) * scale, 6).tolist()))
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=OBSTACLE_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for ob in obstacles:
+        row = {"name": ob["name"], "type": ob["type"]}
+        if "center" in ob: row |= cols(["x", "y", "z"], ob["center"])
+        if "p1" in ob: row |= cols(["x", "y", "z"], ob["p1"]) | cols(["x2", "y2", "z2"], ob["p2"])
+        if "size" in ob: row |= cols(["sx", "sy", "sz"], ob["size"]) | cols(["roll", "pitch", "yaw"], ob["rpy"], 180 / np.pi)
+        if "radius" in ob: row |= cols(["radius"], [ob["radius"]])
+        writer.writerow(row)
+    return buf.getvalue()
 
 
 # 球（中心 P (N,3)・半径 r (N,)）と障害物の表面間の符号付き距離 (N,)（めり込むと負）と、

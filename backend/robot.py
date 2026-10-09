@@ -44,6 +44,9 @@ class Robot:
         self.obstacles: list[dict] = []
         self.show_spheres = False
         self._sphere_handles, self._obstacle_handles = [], []
+        # ツール座標（フランジ = アーム先端リンク基準の x, y, z [mm] と u, v, w [deg]）。構成を切り替えても引き継ぐ
+        self.tool = {"x": 0.0, "y": 0.0, "z": 0.0, "u": 0.0, "v": 0.0, "w": 0.0}
+        self._flange: str | None = None
 
     # 選択可能な構成の一覧（フォルダ名）
     @staticmethod
@@ -59,6 +62,10 @@ class Robot:
             arm_model = load_urdf(ASSETS_DIR / "arms" / arm_name)
             self.arm, self.hand = ViserUrdf(self.server, urdf_or_path=arm_model), None
             self.arm_name, self.hand_name = arm_name, hand_name
+            # ツール座標系はフランジ（子のないアーム先端リンク）のフレームの子として描き、関節角度の変更に追従させる
+            parents = {j.parent for j in arm_model.robot.joints}
+            self._flange = _viser_name_from_frame(arm_model.scene, next(l.name for l in arm_model.robot.links if l.name not in parents), "/visual")
+            self._draw_tool()
 
             # ハンドはアームの取り付けリンクのフレームを親にし、mount.json の位置・姿勢でオフセットする
             hand_dir, hand_model = None, None
@@ -80,6 +87,19 @@ class Robot:
 
             # 全関節0の姿勢で表示する
             self.arm.update_cfg(np.zeros(len(self.arm.get_actuated_joint_names())))
+
+    # ツール座標系を描き直す（uvw は zyx オイラー角: Rz(u)・Ry(v)・Rx(w)。同名ノードの追加で前の描画を置き換える）
+    def _draw_tool(self) -> None:
+        t = self.tool
+        u, v, w = np.deg2rad([t["u"], t["v"], t["w"]])
+        self.server.scene.add_frame(f"{self._flange}/tool", axes_length=0.05, axes_radius=0.002, position=np.array([t["x"], t["y"], t["z"]]) / 1000,
+                                    wxyz=(vtf.SO3.from_z_radians(u) @ vtf.SO3.from_y_radians(v) @ vtf.SO3.from_x_radians(w)).wxyz)
+
+    # ツール座標（x, y, z [mm] と u, v, w [deg]）を設定して描き直す
+    def set_tool(self, tool: dict) -> None:
+        with self._lock:
+            self.tool = tool
+            self._draw_tool()
 
     # 近似球の表示・非表示を切り替える（構成を切り替えた後も引き継ぐ）
     def set_spheres_visible(self, visible: bool) -> None:
