@@ -71,10 +71,10 @@ class RobotRequest(BaseModel):
     hand: str | None = None
 
 
-# 選べるアーム・ハンドと、表示中の構成を返す
+# 選べるアーム・ハンドと、表示中の構成・アームの可動関節名（軸数に合わせて入力欄を作るため）を返す
 @app.get("/robots")
 def get_robots():
-    return {**Robot.list_configs(), "current": {"arm": robot.arm_name, "hand": robot.hand_name}}
+    return {**Robot.list_configs(), "current": {"arm": robot.arm_name, "hand": robot.hand_name}, "joints": robot.arm.get_actuated_joint_names()}
 
 
 # 表示する構成を切り替える（再生中の軌道は止めてから差し替える）
@@ -85,9 +85,9 @@ def post_robot(req: RobotRequest):
     return {"ok": True}
 
 
-# 6軸アーム専用のため、常に6個の角度[deg]をまとめて受け取る
+# 全関節の角度[deg]をまとめて受け取る（個数は表示中のアームの軸数に合わせる）
 class AnglesRequest(BaseModel):
-    angles: list[float] = Field(min_length=6, max_length=6)
+    angles: list[float]
 
 
 # 関節角度を表示姿勢に反映する（送りっぱなしの SET 専用）
@@ -235,9 +235,9 @@ if COLLISION:
     class ObstaclesRequest(BaseModel):
         obstacles: list[Annotated[SphereObstacle | BoxObstacle | CapsuleObstacle, Field(discriminator="type")]]
 
-    # 距離を求める関節角度[deg]（6軸）。max_distance [m] を指定すると、それ以下の距離のペアだけを返す
+    # 距離を求める関節角度[deg]（アームの軸数分）。max_distance [m] を指定すると、それ以下の距離のペアだけを返す
     class DistancesRequest(BaseModel):
-        angles: list[float] = Field(min_length=6, max_length=6)
+        angles: list[float]
         max_distance: float | None = None
 
     # 登録中の障害物を返す

@@ -136,16 +136,16 @@ class Robot:
             self.arm.update_cfg(np.deg2rad(np.array(angles, dtype=float)))
 
 
-# 軌道 CSV を (時刻[sec] のリスト, 6関節角度[deg] のリスト) として読み込む
+# 軌道 CSV を (時刻[sec] のリスト, 関節角度[deg] のリスト) として読み込む（関節の数は CSV の列の数に従う）
 # （パス指定とアップロードの両方から使えるよう、CSV の中身の文字列を受け取る）
 def load_trajectory(text: str) -> tuple[list[float], list[list[float]]]:
     rows = [row for row in csv.reader(text.splitlines()) if row]
-    # t 形式: ヘッダ "t,joint1..joint6" + t[sec] と6関節角度[deg]
+    # t 形式: ヘッダ "t,joint1,joint2,..." + t[sec] と各関節角度[deg]
     if rows[0][0].strip().lower() == "t":
-        return [float(r[0]) for r in rows[1:]], [[float(v) for v in r[1:7]] for r in rows[1:]]
+        return [float(r[0]) for r in rows[1:]], [[float(v) for v in r[1:]] for r in rows[1:]]
     # ロボットログ形式: メタ情報2行 + データヘッダ。末尾の終了情報行は列数が合わないので除く
     header = rows[2]
-    t_col, j_cols = header.index("ElapsedTime[msec]"), [header.index(f"Joint(J{i})[deg]") for i in range(1, 7)]
+    t_col, j_cols = header.index("ElapsedTime[msec]"), [header.index(f"Joint(J{i})[deg]") for i in range(1, 100) if f"Joint(J{i})[deg]" in header]
     data = [r for r in rows[3:] if len(r) == len(header)]
     return [float(r[t_col]) / 1000 for r in data], [[float(r[c]) for c in j_cols] for r in data]
 

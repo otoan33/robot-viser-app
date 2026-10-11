@@ -25,15 +25,20 @@ async def index(request: Request):
             # 表示するアームとハンドの構成を選ぶ（選んだらすぐ反映。ハンドは "" を「なし」として送る）
             with ui.card().classes("w-full"):
                 ui.label("構成").classes("text-lg font-bold")
-                async def load_robot(): (await client.post("/robot", json={"arm": arm.value, "hand": hand.value or None})).raise_for_status()
+                async def load_robot():
+                    (await client.post("/robot", json={"arm": arm.value, "hand": hand.value or None})).raise_for_status()
+                    make_joint_inputs((await client.get("/robots")).json()["joints"])
                 arm = ui.select(robots["arms"], label="アーム", value=robots["current"]["arm"], on_change=load_robot).classes("w-full")
                 hand = ui.select({"": "なし", **{h: h for h in robots["hands"]}}, label="ハンド", value=robots["current"]["hand"] or "", on_change=load_robot).classes("w-full")
 
-            # 6軸の関節角度[deg]を入力し、まとめて送る
+            # 全関節の角度[deg]を入力し、まとめて送る（入力欄はアームの軸数に合わせ、アームを切り替えたら作り直す）
             with ui.card().classes("w-full"):
                 ui.label("関節角度 [deg]").classes("text-lg font-bold")
-                with ui.grid(columns=3).classes("w-full"):
-                    inputs = [ui.number(f"J{i}", value=0) for i in range(1, 7)]
+                joint_grid, inputs = ui.grid(columns=3).classes("w-full"), []
+                def make_joint_inputs(joints):
+                    joint_grid.clear()
+                    with joint_grid: inputs[:] = [ui.number(f"J{i}", value=0) for i in range(1, len(joints) + 1)]
+                make_joint_inputs(robots["joints"])
                 async def send_joints(): (await client.post("/joints", json={"angles": [n.value for n in inputs]})).raise_for_status()
                 ui.button("送信", on_click=send_joints)
 
